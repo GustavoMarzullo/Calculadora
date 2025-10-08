@@ -7,6 +7,7 @@
 
 #include <windows.h>
 #include <commctrl.h>
+#include <commdlg.h>
 #include <tchar.h>
 #include <vector>
 #include <string>
@@ -81,6 +82,10 @@ struct CalculationHistory {
 #define ID_NAME_INPUT 1012
 #define ID_NAME_OK 1013
 #define ID_NAME_CANCEL 1014
+#define ID_FILE_SAVE 1015
+#define ID_FILE_OPEN 1016
+#define ID_HELP_SHORTCUTS 1017
+#define ID_HELP_ABOUT 1018
 #define ID_MATRIX_START 2000
 
 // Cores da paleta elegante
@@ -209,6 +214,23 @@ public:
             return false;
         }
         
+        // Criar menu
+        HMENU hMenu = CreateMenu();
+        HMENU hFileMenu = CreatePopupMenu();
+        HMENU hHelpMenu = CreatePopupMenu();
+        
+        AppendMenu(hFileMenu, MF_STRING, ID_FILE_OPEN, TEXT("&Abrir...\tCtrl+O"));
+        AppendMenu(hFileMenu, MF_STRING, ID_FILE_SAVE, TEXT("&Salvar Como...\tCtrl+S"));
+        AppendMenu(hFileMenu, MF_SEPARATOR, 0, nullptr);
+        AppendMenu(hFileMenu, MF_STRING, IDCANCEL, TEXT("&Sair\tAlt+F4"));
+        
+        AppendMenu(hHelpMenu, MF_STRING, ID_HELP_SHORTCUTS, TEXT("&Atalhos de Teclado\tF1"));
+        AppendMenu(hHelpMenu, MF_SEPARATOR, 0, nullptr);
+        AppendMenu(hHelpMenu, MF_STRING, ID_HELP_ABOUT, TEXT("&Sobre..."));
+        
+        AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hFileMenu, TEXT("&Arquivo"));
+        AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hHelpMenu, TEXT("&Ajuda"));
+        
         // Criar janela principal
         hwndMain = CreateWindowEx(
             WS_EX_LAYERED,
@@ -217,7 +239,7 @@ public:
             WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX,
             CW_USEDEFAULT, CW_USEDEFAULT,
             800, 600,
-            nullptr, nullptr, hInstance, this
+            nullptr, hMenu, hInstance, this
         );
         
         if (!hwndMain) {
@@ -464,6 +486,177 @@ public:
     void TriggerCalculation() {
         std::lock_guard<std::mutex> lock(calculationMutex);
         shouldCalculate = true;
+    }
+    
+    void SaveToFile() {
+        // Criar diálogo para salvar arquivo
+        TCHAR fileName[MAX_PATH] = TEXT("");
+        
+        OPENFILENAME ofn = {};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = hwndMain;
+        ofn.lpstrFile = fileName;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrFilter = TEXT("Arquivos de Cálculo (*.calc)\0*.calc\0Todos os Arquivos (*.*)\0*.*\0");
+        ofn.nFilterIndex = 1;
+        ofn.lpstrDefExt = TEXT("calc");
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
+        ofn.lpstrTitle = TEXT("Salvar Cálculo Como...");
+        
+        if (GetSaveFileName(&ofn)) {
+            try {
+                std::ofstream file(fileName, std::ios::binary);
+                if (!file.is_open()) {
+                    MessageBox(hwndMain, TEXT("Erro ao criar o arquivo."), TEXT("Erro"), MB_OK | MB_ICONERROR);
+                    return;
+                }
+                
+                // Cabeçalho do arquivo
+                file.write("CALC", 4); // Assinatura
+                int version = 1;
+                file.write(reinterpret_cast<const char*>(&version), sizeof(version));
+                
+                // Dados da matriz atual
+                file.write(reinterpret_cast<const char*>(&currentSize), sizeof(currentSize));
+                
+                // Matriz de coeficientes
+                for (int i = 0; i < currentSize; i++) {
+                    for (int j = 0; j < currentSize; j++) {
+                        TCHAR buffer[32];
+                        GetWindowText(matrixInputs[i][j], buffer, 32);
+                        double value = _tcstod(buffer, nullptr);
+                        file.write(reinterpret_cast<const char*>(&value), sizeof(value));
+                    }
+                }
+                
+                // Constantes
+                for (int i = 0; i < currentSize; i++) {
+                    TCHAR buffer[32];
+                    GetWindowText(constantInputs[i], buffer, 32);
+                    double value = _tcstod(buffer, nullptr);
+                    file.write(reinterpret_cast<const char*>(&value), sizeof(value));
+                }
+                
+                // Nome personalizado (se houver último cálculo)
+                std::basic_string<TCHAR> customName;
+                if (hasLastCalculation && !lastSolution.values.empty()) {
+                    customName = TEXT("Cálculo Salvo");
+                }
+                
+                size_t nameLen = customName.length();
+                file.write(reinterpret_cast<const char*>(&nameLen), sizeof(nameLen));
+                if (nameLen > 0) {
+                    file.write(reinterpret_cast<const char*>(customName.c_str()), nameLen * sizeof(TCHAR));
+                }
+                
+                file.close();
+                MessageBox(hwndMain, TEXT("Arquivo salvo com sucesso!"), TEXT("Sucesso"), MB_OK | MB_ICONINFORMATION);
+                
+            } catch (...) {
+                MessageBox(hwndMain, TEXT("Erro ao salvar o arquivo."), TEXT("Erro"), MB_OK | MB_ICONERROR);
+            }
+        }
+    }
+    
+    void LoadFromFile() {
+        // Criar diálogo para abrir arquivo
+        TCHAR fileName[MAX_PATH] = TEXT("");
+        
+        OPENFILENAME ofn = {};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = hwndMain;
+        ofn.lpstrFile = fileName;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrFilter = TEXT("Arquivos de Cálculo (*.calc)\0*.calc\0Todos os Arquivos (*.*)\0*.*\0");
+        ofn.nFilterIndex = 1;
+        ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+        ofn.lpstrTitle = TEXT("Abrir Cálculo...");
+        
+        if (GetOpenFileName(&ofn)) {
+            try {
+                std::ifstream file(fileName, std::ios::binary);
+                if (!file.is_open()) {
+                    MessageBox(hwndMain, TEXT("Erro ao abrir o arquivo."), TEXT("Erro"), MB_OK | MB_ICONERROR);
+                    return;
+                }
+                
+                // Verificar cabeçalho
+                char signature[4];
+                file.read(signature, 4);
+                if (strncmp(signature, "CALC", 4) != 0) {
+                    MessageBox(hwndMain, TEXT("Arquivo inválido ou corrompido."), TEXT("Erro"), MB_OK | MB_ICONERROR);
+                    return;
+                }
+                
+                int version;
+                file.read(reinterpret_cast<char*>(&version), sizeof(version));
+                if (version != 1) {
+                    MessageBox(hwndMain, TEXT("Versão do arquivo não suportada."), TEXT("Erro"), MB_OK | MB_ICONERROR);
+                    return;
+                }
+                
+                // Ler tamanho da matriz
+                int fileSize;
+                file.read(reinterpret_cast<char*>(&fileSize), sizeof(fileSize));
+                
+                if (fileSize < 2 || fileSize > 10) {
+                    MessageBox(hwndMain, TEXT("Tamanho da matriz inválido no arquivo."), TEXT("Erro"), MB_OK | MB_ICONERROR);
+                    return;
+                }
+                
+                // Atualizar tamanho da matriz
+                currentSize = fileSize;
+                TCHAR sizeStr[10];
+                _stprintf_s(sizeStr, TEXT("%d"), currentSize);
+                SetWindowText(hwndMatrixSize, sizeStr);
+                
+                // Atualizar interface diretamente
+                UpdateMatrixInputs();
+                
+                // Ler matriz de coeficientes
+                for (int i = 0; i < currentSize; i++) {
+                    for (int j = 0; j < currentSize; j++) {
+                        double value;
+                        file.read(reinterpret_cast<char*>(&value), sizeof(value));
+                        
+                        TCHAR valueStr[32];
+                        _stprintf_s(valueStr, TEXT("%.6g"), value);
+                        SetWindowText(matrixInputs[i][j], valueStr);
+                    }
+                }
+                
+                // Ler constantes
+                for (int i = 0; i < currentSize; i++) {
+                    double value;
+                    file.read(reinterpret_cast<char*>(&value), sizeof(value));
+                    
+                    TCHAR valueStr[32];
+                    _stprintf_s(valueStr, TEXT("%.6g"), value);
+                    SetWindowText(constantInputs[i], valueStr);
+                }
+                
+                // Ler nome personalizado (opcional)
+                size_t nameLen;
+                if (file.read(reinterpret_cast<char*>(&nameLen), sizeof(nameLen))) {
+                    if (nameLen > 0 && nameLen < 1000) {
+                        std::vector<TCHAR> nameBuffer(nameLen + 1);
+                        file.read(reinterpret_cast<char*>(nameBuffer.data()), nameLen * sizeof(TCHAR));
+                        nameBuffer[nameLen] = 0;
+                        // Nome carregado (pode ser usado futuramente)
+                    }
+                }
+                
+                file.close();
+                
+                // Forçar recálculo
+                TriggerCalculation();
+                
+                MessageBox(hwndMain, TEXT("Arquivo carregado com sucesso!"), TEXT("Sucesso"), MB_OK | MB_ICONINFORMATION);
+                
+            } catch (...) {
+                MessageBox(hwndMain, TEXT("Erro ao carregar o arquivo."), TEXT("Erro"), MB_OK | MB_ICONERROR);
+            }
+        }
     }
     
     void ClearAllVariables() {
@@ -1023,6 +1216,52 @@ public:
         return result;
     }
     
+    void ShowKeyboardShortcuts() {
+        TCHAR helpText[] = TEXT("ATALHOS DE TECLADO\n\n")
+                          TEXT("ARQUIVOS:\n")
+                          TEXT("Ctrl+O\t\tAbrir arquivo .calc\n")
+                          TEXT("Ctrl+S\t\tSalvar como arquivo .calc\n")
+                          TEXT("Alt+F4\t\tSair do programa\n\n")
+                          TEXT("NAVEGACAO:\n")
+                          TEXT("Tab\t\tNavegar entre campos\n")
+                          TEXT("Shift+Tab\t\tNavegar para tras\n")
+                          TEXT("Enter\t\tConfirmar/Atualizar\n")
+                          TEXT("Escape\t\tCancelar dialogos\n\n")
+                          TEXT("CALCULADORA:\n")
+                          TEXT("Enter (no campo variaveis)\tAtualizar matriz\n")
+                          TEXT("Enter (nos dialogos)\t\tConfirmar\n\n")
+                          TEXT("HISTORICO:\n")
+                          TEXT("Gravar\t\tSalvar calculo no historico\n")
+                          TEXT("Limpar\t\tLimpar todos os campos\n\n")
+                          TEXT("AJUDA:\n")
+                          TEXT("F1\t\tMostrar esta ajuda");
+        
+        MessageBox(hwndMain, helpText, TEXT("Atalhos de Teclado - Calculadora de Sistemas Lineares"), 
+                  MB_OK | MB_ICONINFORMATION);
+    }
+    
+    void ShowAbout() {
+        TCHAR aboutText[] = TEXT("CALCULADORA DE SISTEMAS LINEARES\n")
+                           TEXT("Versao 1.0.0\n\n")
+                           TEXT("Uma calculadora profissional para resolver\n")
+                           TEXT("sistemas de equacoes lineares usando o\n")
+                           TEXT("metodo de Eliminacao Gaussiana.\n\n")
+                           TEXT("FUNCIONALIDADES:\n")
+                           TEXT("- Suporte a 2-10 variaveis\n")
+                           TEXT("- Calculo dinamico em tempo real\n")
+                           TEXT("- Historico persistente com nomes\n")
+                           TEXT("- Salvar/carregar arquivos .calc\n")
+                           TEXT("- Interface elegante e responsiva\n")
+                           TEXT("- Atalhos de teclado completos\n\n")
+                           TEXT("Desenvolvido por: Gustavo Marzullo\n")
+                           TEXT("Ano: 2024\n")
+                           TEXT("Tecnologia: C++ com Win32 API\n\n")
+                           TEXT("(C) 2024 - Todos os direitos reservados");
+        
+        MessageBox(hwndMain, aboutText, TEXT("Sobre - Calculadora de Sistemas Lineares"), 
+                  MB_OK | MB_ICONINFORMATION);
+    }
+    
     void ClearHistory() {
         calculationHistory.clear();
         SaveHistoryToFile(); // Salvar após limpar
@@ -1360,6 +1599,20 @@ public:
     LRESULT HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
         switch (uMsg) {
             case WM_KEYDOWN:
+                // Verificar atalhos de teclado
+                if (wParam == VK_F1) {
+                    ShowKeyboardShortcuts();
+                    return 0;
+                } else if (GetKeyState(VK_CONTROL) & 0x8000) {
+                    if (wParam == 'O') {
+                        LoadFromFile();
+                        return 0;
+                    } else if (wParam == 'S') {
+                        SaveToFile();
+                        return 0;
+                    }
+                }
+                
                 // Verificar se Enter foi pressionado no campo de número de variáveis
                 if (wParam == VK_RETURN && GetFocus() == hwndMatrixSize) {
                     // Forçar atualização do tamanho da matriz
@@ -1398,6 +1651,27 @@ public:
                         SaveCurrentCalculation();
                     } else if (LOWORD(wParam) == ID_CLEAR_BUTTON) {
                         ClearAllVariables();
+                    }
+                }
+                
+                // Tratar comandos de menu
+                if (HIWORD(wParam) == 0) { // Menu commands
+                    switch (LOWORD(wParam)) {
+                        case ID_FILE_SAVE:
+                            SaveToFile();
+                            return 0;
+                        case ID_FILE_OPEN:
+                            LoadFromFile();
+                            return 0;
+                        case IDCANCEL:
+                            PostMessage(hwnd, WM_CLOSE, 0, 0);
+                            return 0;
+                        case ID_HELP_SHORTCUTS:
+                            ShowKeyboardShortcuts();
+                            return 0;
+                        case ID_HELP_ABOUT:
+                            ShowAbout();
+                            return 0;
                     }
                 } else if (HIWORD(wParam) == EN_CHANGE) {
                     if (LOWORD(wParam) == ID_MATRIX_SIZE) {
@@ -1573,7 +1847,7 @@ public:
     }
 };
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpCmdLine*/, int /*nCmdShow*/) {
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR lpCmdLine, int /*nCmdShow*/) {
     // Inicializar Common Controls
     INITCOMMONCONTROLSEX icex;
     icex.dwSize = sizeof(INITCOMMONCONTROLSEX);

@@ -1,0 +1,27 @@
+LICENÇA DE USO - CALCULADORA DE SISTEMAS LINEARES
+
+Copyright (c) 2024 Gustavo Marzullo
+
+Este software é fornecido "como está", sem garantias de qualquer tipo, 
+expressas ou implícitas, incluindo, mas não se limitando às garantias 
+implícitas de comercialização e adequação a um propósito específico.
+
+PERMISSÕES:
+- Uso pessoal e educacional
+- Distribuição do software
+- Modificação do código fonte (se disponível)
+
+LIMITAÇÕES:
+- O autor não se responsabiliza por danos diretos ou indiretos
+- Não há garantia de funcionamento perfeito
+- Suporte técnico não é obrigatório
+
+CONDIÇÕES:
+- Esta licença deve ser incluída em todas as cópias
+- Créditos ao autor original devem ser mantidos
+- Modificações devem ser claramente indicadas
+
+Para mais informações, entre em contato com o desenvolvedor.
+
+Gustavo Marzullo
+2024
