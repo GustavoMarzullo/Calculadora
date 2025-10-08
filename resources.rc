@@ -1,0 +1,37 @@
+#include "resource.h"
+#include <windows.h>
+
+// Ícone da aplicação
+IDI_CALCULATOR ICON "calculator.ico"
+
+// Informações de versão
+IDR_VERSION1 VERSIONINFO
+FILEVERSION 1,0,0,0
+PRODUCTVERSION 1,0,0,0
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEFLAGS 0x0L
+FILEOS VOS__WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "041604B0"
+        BEGIN
+            VALUE "CompanyName", "Calculadora Sistemas Lineares"
+            VALUE "FileDescription", "Calculadora para Sistemas de Equações Lineares"
+            VALUE "FileVersion", "1.0.0.0"
+            VALUE "InternalName", "LinearCalculator"
+            VALUE "LegalCopyright", "Copyright (C) 2024"
+            VALUE "OriginalFilename", "LinearCalculator.exe"
+            VALUE "ProductName", "Calculadora de Sistemas Lineares"
+            VALUE "ProductVersion", "1.0.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x416, 1200
+    END
+END
+
+
