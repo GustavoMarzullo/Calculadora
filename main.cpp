@@ -28,6 +28,7 @@ struct CalculationHistory {
     LinearSolver::Solution solution;
     std::basic_string<TCHAR> timestamp;
     std::basic_string<TCHAR> description;
+    std::basic_string<TCHAR> customName;
     
     // Construtor padrão
     CalculationHistory() : size(0) {}
@@ -75,6 +76,11 @@ struct CalculationHistory {
 #define ID_CLEAR_HISTORY 1007
 #define ID_HISTORY_LIST 1008
 #define ID_RESTORE_CALCULATION 1009
+#define ID_DELETE_ITEM 1010
+#define ID_RENAME_ITEM 1011
+#define ID_NAME_INPUT 1012
+#define ID_NAME_OK 1013
+#define ID_NAME_CANCEL 1014
 #define ID_MATRIX_START 2000
 
 // Cores da paleta elegante
@@ -96,6 +102,7 @@ private:
     HWND hwndSaveButton;
     HWND hwndClearButton;
     HWND hwndHistoryWindow;
+    HWND hwndNameDialog;
     std::vector<std::vector<HWND>> matrixInputs;
     std::vector<HWND> constantInputs;
     LinearSolver solver;
@@ -142,6 +149,7 @@ public:
         hwndSaveButton = nullptr;
         hwndClearButton = nullptr;
         hwndHistoryWindow = nullptr;
+        hwndNameDialog = nullptr;
         
         // Criar brushes para cores
         hBrushBackground = CreateSolidBrush(COLOR_BG);
@@ -169,6 +177,12 @@ public:
         if (hwndHistoryWindow && IsWindow(hwndHistoryWindow)) {
             DestroyWindow(hwndHistoryWindow);
             hwndHistoryWindow = nullptr;
+        }
+        
+        // Fechar janela de nome se estiver aberta
+        if (hwndNameDialog && IsWindow(hwndNameDialog)) {
+            DestroyWindow(hwndNameDialog);
+            hwndNameDialog = nullptr;
         }
         
         DeleteObject(hBrushBackground);
@@ -512,37 +526,159 @@ public:
             }
         }
         
-        // Adicionar ao histórico
-        AddToHistory(lastMatrix, lastConstants, lastSolution);
-        
-        // Mostrar confirmação com detalhes
-        TCHAR confirmMsg[256];
-        if (lastSolution.hasSolution) {
-            _stprintf_s(confirmMsg, TEXT("✓ Cálculo gravado com sucesso!\n\nSistema %dx%d com solução única\nTotal de itens no histórico: %d"), 
-                       currentSize, currentSize, static_cast<int>(calculationHistory.size()));
-        } else {
-            TCHAR statusText[64];
-            switch (lastSolution.status) {
-                case LinearSolver::SolutionStatus::NO_SOLUTION:
-                    _tcscpy_s(statusText, TEXT("sem solução"));
-                    break;
-                case LinearSolver::SolutionStatus::INFINITE_SOLUTIONS:
-                    _tcscpy_s(statusText, TEXT("infinitas soluções"));
-                    break;
-                default:
-                    _tcscpy_s(statusText, TEXT("status especial"));
-                    break;
-            }
-            _stprintf_s(confirmMsg, TEXT("✓ Cálculo gravado com sucesso!\n\nSistema %dx%d %s\nTotal de itens no histórico: %d"), 
-                       currentSize, currentSize, statusText, static_cast<int>(calculationHistory.size()));
+        // Mostrar diálogo para inserir nome personalizado
+        ShowNameDialog();
+    }
+    
+    void ShowNameDialog() {
+        if (hwndNameDialog && IsWindow(hwndNameDialog)) {
+            SetForegroundWindow(hwndNameDialog);
+            return;
         }
         
-        MessageBox(hwndMain, confirmMsg, TEXT("Gravado no Histórico"), MB_OK | MB_ICONINFORMATION);
+        // Registrar classe da janela de nome se necessário
+        static bool nameClassRegistered = false;
+        if (!nameClassRegistered) {
+            WNDCLASSEX wcName = {};
+            wcName.cbSize = sizeof(WNDCLASSEX);
+            wcName.style = CS_HREDRAW | CS_VREDRAW;
+            wcName.lpfnWndProc = NameDialogProc;
+            wcName.hInstance = GetModuleHandle(nullptr);
+            wcName.hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(IDI_CALCULATOR));
+            wcName.hCursor = LoadCursor(nullptr, IDC_ARROW);
+            wcName.hbrBackground = hBrushBackground;
+            wcName.lpszClassName = TEXT("NameDialog");
+            RegisterClassEx(&wcName);
+            nameClassRegistered = true;
+        }
+        
+        // Criar janela de diálogo
+        hwndNameDialog = CreateWindowEx(
+            WS_EX_DLGMODALFRAME | WS_EX_TOPMOST,
+            TEXT("NameDialog"),
+            TEXT("Nome do Cálculo"),
+            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+            CW_USEDEFAULT, CW_USEDEFAULT, 400, 200,
+            hwndMain, nullptr, GetModuleHandle(nullptr), this
+        );
+        
+        if (hwndNameDialog) {
+            // Label de instrução
+            CreateWindow(TEXT("STATIC"), TEXT("Digite um nome para este cálculo:"),
+                WS_VISIBLE | WS_CHILD,
+                20, 20, 350, 20,
+                hwndNameDialog, nullptr, GetModuleHandle(nullptr), nullptr);
+            
+            // Campo de entrada
+            HWND hwndNameInput = CreateWindow(TEXT("EDIT"), TEXT(""),
+                WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
+                20, 50, 340, 25,
+                hwndNameDialog, (HMENU)(UINT_PTR)ID_NAME_INPUT, GetModuleHandle(nullptr), nullptr);
+            
+            // Botões
+            CreateWindow(TEXT("BUTTON"), TEXT("OK"),
+                WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
+                200, 90, 80, 30,
+                hwndNameDialog, (HMENU)(UINT_PTR)ID_NAME_OK, GetModuleHandle(nullptr), nullptr);
+            
+            CreateWindow(TEXT("BUTTON"), TEXT("Cancelar"),
+                WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+                290, 90, 80, 30,
+                hwndNameDialog, (HMENU)(UINT_PTR)ID_NAME_CANCEL, GetModuleHandle(nullptr), nullptr);
+            
+            // Aplicar fontes
+            SendMessage(hwndNameInput, WM_SETFONT, (WPARAM)hFontMain, TRUE);
+            
+            // Definir foco no campo de entrada
+            SetFocus(hwndNameInput);
+            
+            // Gerar nome sugerido
+            TCHAR suggestedName[64];
+            if (lastSolution.hasSolution) {
+                _stprintf_s(suggestedName, TEXT("Sistema %dx%d - Solução"), currentSize, currentSize);
+            } else {
+                _stprintf_s(suggestedName, TEXT("Sistema %dx%d"), currentSize, currentSize);
+            }
+            SetWindowText(hwndNameInput, suggestedName);
+            
+            // Selecionar todo o texto
+            SendMessage(hwndNameInput, EM_SETSEL, 0, -1);
+        }
+    }
+    
+    LRESULT HandleNameDialogMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+        switch (uMsg) {
+            case WM_KEYDOWN:
+                if (wParam == VK_RETURN) {
+                    // Enter pressionado - confirmar
+                    HWND hwndNameInput = GetDlgItem(hwnd, ID_NAME_INPUT);
+                    TCHAR customName[256];
+                    GetWindowText(hwndNameInput, customName, 256);
+                    
+                    // Adicionar ao histórico com nome personalizado
+                    AddToHistory(lastMatrix, lastConstants, lastSolution, customName);
+                    
+                    // Mostrar confirmação
+                    TCHAR confirmMsg[512];
+                    _stprintf_s(confirmMsg, TEXT("✓ Cálculo '%s' gravado com sucesso!\n\nTotal de itens no histórico: %d"), 
+                               customName, static_cast<int>(calculationHistory.size()));
+                    MessageBox(hwndMain, confirmMsg, TEXT("Gravado no Histórico"), MB_OK | MB_ICONINFORMATION);
+                    
+                    // Fechar diálogo
+                    DestroyWindow(hwnd);
+                    hwndNameDialog = nullptr;
+                    return 0;
+                } else if (wParam == VK_ESCAPE) {
+                    // Escape pressionado - cancelar
+                    DestroyWindow(hwnd);
+                    hwndNameDialog = nullptr;
+                    return 0;
+                }
+                break;
+                
+            case WM_COMMAND:
+                if (HIWORD(wParam) == BN_CLICKED) {
+                    if (LOWORD(wParam) == ID_NAME_OK) {
+                        // Obter o nome digitado
+                        HWND hwndNameInput = GetDlgItem(hwnd, ID_NAME_INPUT);
+                        TCHAR customName[256];
+                        GetWindowText(hwndNameInput, customName, 256);
+                        
+                        // Adicionar ao histórico com nome personalizado
+                        AddToHistory(lastMatrix, lastConstants, lastSolution, customName);
+                        
+                        // Mostrar confirmação
+                        TCHAR confirmMsg[512];
+                        _stprintf_s(confirmMsg, TEXT("✓ Cálculo '%s' gravado com sucesso!\n\nTotal de itens no histórico: %d"), 
+                                   customName, static_cast<int>(calculationHistory.size()));
+                        MessageBox(hwndMain, confirmMsg, TEXT("Gravado no Histórico"), MB_OK | MB_ICONINFORMATION);
+                        
+                        // Fechar diálogo
+                        DestroyWindow(hwnd);
+                        hwndNameDialog = nullptr;
+                        return 0;
+                    } else if (LOWORD(wParam) == ID_NAME_CANCEL) {
+                        // Cancelar
+                        DestroyWindow(hwnd);
+                        hwndNameDialog = nullptr;
+                        return 0;
+                    }
+                }
+                break;
+                
+            case WM_CLOSE:
+                DestroyWindow(hwnd);
+                hwndNameDialog = nullptr;
+                return 0;
+        }
+        
+        return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
     
     void AddToHistory(const std::vector<std::vector<double>>& matrix, 
                      const std::vector<double>& constants, 
-                     const LinearSolver::Solution& solution) {
+                     const LinearSolver::Solution& solution, 
+                     const std::basic_string<TCHAR>& customName = TEXT("")) {
         // Não adicionar ao histórico se há campos vazios ou erro
         if (!solution.hasSolution && solution.status == LinearSolver::SolutionStatus::CALCULATION_ERROR) {
             return;
@@ -558,6 +694,11 @@ public:
         
         // Criar entrada do histórico
         CalculationHistory entry(currentSize, matrix, constants, solution);
+        
+        // Definir nome personalizado se fornecido
+        if (!customName.empty()) {
+            entry.customName = customName;
+        }
         
         // Adicionar ao início da lista
         calculationHistory.insert(calculationHistory.begin(), entry);
@@ -600,7 +741,7 @@ public:
             TEXT("HistoryWindow"),
             TEXT("Histórico de Cálculos"),
             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-            CW_USEDEFAULT, CW_USEDEFAULT, 600, 400,
+            CW_USEDEFAULT, CW_USEDEFAULT, 550, 400,
             hwndMain, nullptr, GetModuleHandle(nullptr), this
         );
         
@@ -608,7 +749,7 @@ public:
             // Criar lista de histórico
             HWND hwndList = CreateWindow(TEXT("LISTBOX"), nullptr,
                 WS_VISIBLE | WS_CHILD | WS_BORDER | WS_VSCROLL | LBS_NOTIFY,
-                10, 10, 560, 300,
+                10, 10, 510, 300,
                 hwndHistoryWindow, (HMENU)(UINT_PTR)ID_HISTORY_LIST, GetModuleHandle(nullptr), nullptr);
             
             // Botões
@@ -617,14 +758,24 @@ public:
                 10, 320, 100, 30,
                 hwndHistoryWindow, (HMENU)(UINT_PTR)ID_RESTORE_CALCULATION, GetModuleHandle(nullptr), nullptr);
             
-            CreateWindow(TEXT("BUTTON"), TEXT("Limpar Histórico"),
+            CreateWindow(TEXT("BUTTON"), TEXT("Apagar Item"),
                 WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-                120, 320, 120, 30,
+                120, 320, 100, 30,
+                hwndHistoryWindow, (HMENU)(UINT_PTR)ID_DELETE_ITEM, GetModuleHandle(nullptr), nullptr);
+            
+            CreateWindow(TEXT("BUTTON"), TEXT("Renomear"),
+                WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+                230, 320, 90, 30,
+                hwndHistoryWindow, (HMENU)(UINT_PTR)ID_RENAME_ITEM, GetModuleHandle(nullptr), nullptr);
+            
+            CreateWindow(TEXT("BUTTON"), TEXT("Limpar Tudo"),
+                WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+                330, 320, 100, 30,
                 hwndHistoryWindow, (HMENU)(UINT_PTR)ID_CLEAR_HISTORY, GetModuleHandle(nullptr), nullptr);
             
             CreateWindow(TEXT("BUTTON"), TEXT("Fechar"),
                 WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-                470, 320, 100, 30,
+                440, 320, 70, 30,
                 hwndHistoryWindow, (HMENU)IDCANCEL, GetModuleHandle(nullptr), nullptr);
             
             // Preencher lista com histórico
@@ -643,8 +794,17 @@ public:
         for (size_t i = 0; i < calculationHistory.size(); i++) {
             const auto& entry = calculationHistory[i];
             TCHAR listItem[512];
-            _stprintf_s(listItem, TEXT("%s - %s"), 
-                       entry.timestamp.c_str(), entry.description.c_str());
+            
+            if (!entry.customName.empty()) {
+                // Mostrar nome personalizado primeiro
+                _stprintf_s(listItem, TEXT("★ %s (%s)"), 
+                           entry.customName.c_str(), entry.timestamp.c_str());
+            } else {
+                // Mostrar descrição padrão
+                _stprintf_s(listItem, TEXT("%s - %s"), 
+                           entry.timestamp.c_str(), entry.description.c_str());
+            }
+            
             SendMessage(hwndList, LB_ADDSTRING, 0, (LPARAM)listItem);
         }
     }
@@ -697,6 +857,170 @@ public:
         
         // Recalcular
         TriggerCalculation();
+    }
+    
+    void DeleteHistoryItem(int index) {
+        if (index < 0 || index >= static_cast<int>(calculationHistory.size())) {
+            return;
+        }
+        
+        // Confirmar exclusão
+        const auto& entry = calculationHistory[index];
+        TCHAR confirmMsg[512];
+        
+        if (!entry.customName.empty()) {
+            _stprintf_s(confirmMsg, TEXT("Deseja realmente apagar o cálculo '%s'?"), 
+                       entry.customName.c_str());
+        } else {
+            _stprintf_s(confirmMsg, TEXT("Deseja realmente apagar este cálculo?\n\n%s"), 
+                       entry.description.c_str());
+        }
+        
+        if (MessageBox(hwndHistoryWindow, confirmMsg, TEXT("Confirmar Exclusão"), 
+                      MB_YESNO | MB_ICONQUESTION) == IDYES) {
+            // Remover item do histórico
+            calculationHistory.erase(calculationHistory.begin() + index);
+            
+            // Salvar alterações
+            SaveHistoryToFile();
+            
+            MessageBox(hwndHistoryWindow, TEXT("Item removido do histórico."), 
+                      TEXT("Sucesso"), MB_OK | MB_ICONINFORMATION);
+        }
+    }
+    
+    void RenameHistoryItem(int index) {
+        if (index < 0 || index >= static_cast<int>(calculationHistory.size())) {
+            return;
+        }
+        
+        auto& entry = calculationHistory[index];
+        
+        // Criar diálogo simples para renomear
+        TCHAR newName[256];
+        
+        // Usar nome atual ou descrição como valor inicial
+        if (!entry.customName.empty()) {
+            _tcscpy_s(newName, entry.customName.c_str());
+        } else {
+            _tcscpy_s(newName, entry.description.c_str());
+        }
+        
+        // Mostrar diálogo de entrada simples (usando InputBox simulado)
+        if (ShowInputDialog(TEXT("Renomear Cálculo"), TEXT("Digite o novo nome:"), newName, 256)) {
+            // Atualizar nome
+            entry.customName = newName;
+            
+            // Salvar alterações
+            SaveHistoryToFile();
+            
+            MessageBox(hwndHistoryWindow, TEXT("Item renomeado com sucesso."), 
+                      TEXT("Sucesso"), MB_OK | MB_ICONINFORMATION);
+        }
+    }
+    
+    bool ShowInputDialog(const TCHAR* title, const TCHAR* prompt, TCHAR* buffer, int bufferSize) {
+        // Implementação simples usando MessageBox + InputBox
+        // Para simplicidade, vamos usar um diálogo modal básico
+        
+        // Criar janela de diálogo temporária
+        HWND hwndInputDialog = CreateWindowEx(
+            WS_EX_DLGMODALFRAME | WS_EX_TOPMOST,
+            TEXT("NameDialog"), // Reutilizar classe já registrada
+            title,
+            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+            CW_USEDEFAULT, CW_USEDEFAULT, 400, 200,
+            hwndHistoryWindow, nullptr, GetModuleHandle(nullptr), this
+        );
+        
+        if (!hwndInputDialog) return false;
+        
+        // Label de prompt
+        CreateWindow(TEXT("STATIC"), prompt,
+            WS_VISIBLE | WS_CHILD,
+            20, 20, 350, 20,
+            hwndInputDialog, nullptr, GetModuleHandle(nullptr), nullptr);
+        
+        // Campo de entrada
+        HWND hwndInput = CreateWindow(TEXT("EDIT"), buffer,
+            WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
+            20, 50, 340, 25,
+            hwndInputDialog, (HMENU)(UINT_PTR)ID_NAME_INPUT, GetModuleHandle(nullptr), nullptr);
+        
+        // Botões
+        CreateWindow(TEXT("BUTTON"), TEXT("OK"),
+            WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,
+            200, 90, 80, 30,
+            hwndInputDialog, (HMENU)(UINT_PTR)ID_NAME_OK, GetModuleHandle(nullptr), nullptr);
+        
+        CreateWindow(TEXT("BUTTON"), TEXT("Cancelar"),
+            WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+            290, 90, 80, 30,
+            hwndInputDialog, (HMENU)(UINT_PTR)ID_NAME_CANCEL, GetModuleHandle(nullptr), nullptr);
+        
+        // Aplicar fonte e selecionar texto
+        SendMessage(hwndInput, WM_SETFONT, (WPARAM)hFontMain, TRUE);
+        SetFocus(hwndInput);
+        SendMessage(hwndInput, EM_SETSEL, 0, -1);
+        
+        // Loop de mensagens modal simples
+        bool result = false;
+        bool dialogActive = true;
+        
+        while (dialogActive && IsWindow(hwndInputDialog)) {
+            MSG msg;
+            if (GetMessage(&msg, nullptr, 0, 0)) {
+                // Verificar se é uma mensagem para nossa janela de diálogo
+                if (msg.hwnd == hwndInputDialog || IsChild(hwndInputDialog, msg.hwnd)) {
+                    // Verificar se Enter foi pressionado
+                    if (msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN) {
+                        GetWindowText(hwndInput, buffer, bufferSize);
+                        result = true;
+                        dialogActive = false;
+                        continue; // Não processar mais esta mensagem
+                    }
+                    // Verificar se Escape foi pressionado
+                    else if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE) {
+                        result = false;
+                        dialogActive = false;
+                        continue; // Não processar mais esta mensagem
+                    }
+                    else if (msg.message == WM_COMMAND && HIWORD(msg.wParam) == BN_CLICKED) {
+                        if (LOWORD(msg.wParam) == ID_NAME_OK) {
+                            GetWindowText(hwndInput, buffer, bufferSize);
+                            result = true;
+                            dialogActive = false;
+                            continue; // Não processar mais esta mensagem
+                        } else if (LOWORD(msg.wParam) == ID_NAME_CANCEL) {
+                            result = false;
+                            dialogActive = false;
+                            continue; // Não processar mais esta mensagem
+                        }
+                    } else if (msg.message == WM_CLOSE) {
+                        result = false;
+                        dialogActive = false;
+                        continue; // Não processar mais esta mensagem
+                    }
+                    
+                    // Processar outras mensagens do diálogo
+                    TranslateMessage(&msg);
+                    DispatchMessage(&msg);
+                } else {
+                    // Mensagens para outras janelas - processar normalmente
+                    TranslateMessage(&msg);
+                    DispatchMessage(&msg);
+                }
+            } else {
+                // GetMessage retornou 0 (WM_QUIT) ou -1 (erro)
+                break;
+            }
+        }
+        
+        if (IsWindow(hwndInputDialog)) {
+            DestroyWindow(hwndInputDialog);
+        }
+        
+        return result;
     }
     
     void ClearHistory() {
@@ -759,6 +1083,13 @@ public:
                 size_t descLen = item.description.length();
                 file.write(reinterpret_cast<const char*>(&descLen), sizeof(descLen));
                 file.write(reinterpret_cast<const char*>(item.description.c_str()), descLen * sizeof(TCHAR));
+                
+                // Escrever nome personalizado
+                size_t customNameLen = item.customName.length();
+                file.write(reinterpret_cast<const char*>(&customNameLen), sizeof(customNameLen));
+                if (customNameLen > 0) {
+                    file.write(reinterpret_cast<const char*>(item.customName.c_str()), customNameLen * sizeof(TCHAR));
+                }
             }
             
             file.close();
@@ -839,6 +1170,17 @@ public:
                     file.read(reinterpret_cast<char*>(descBuffer.data()), descLen * sizeof(TCHAR));
                     descBuffer[descLen] = 0;
                     item.description = descBuffer.data();
+                }
+                
+                // Ler nome personalizado (pode não existir em arquivos antigos)
+                size_t customNameLen = 0;
+                if (file.read(reinterpret_cast<char*>(&customNameLen), sizeof(customNameLen))) {
+                    if (customNameLen > 0 && customNameLen < 1000) { // Validação básica
+                        std::vector<TCHAR> customNameBuffer(customNameLen + 1);
+                        file.read(reinterpret_cast<char*>(customNameBuffer.data()), customNameLen * sizeof(TCHAR));
+                        customNameBuffer[customNameLen] = 0;
+                        item.customName = customNameBuffer.data();
+                    }
                 }
                 
                 calculationHistory.push_back(item);
@@ -979,6 +1321,24 @@ public:
         return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
     
+    static LRESULT CALLBACK NameDialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+        CalculatorApp* app = nullptr;
+        
+        if (uMsg == WM_CREATE) {
+            CREATESTRUCT* cs = reinterpret_cast<CREATESTRUCT*>(lParam);
+            app = reinterpret_cast<CalculatorApp*>(cs->lpCreateParams);
+            SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
+        } else {
+            app = reinterpret_cast<CalculatorApp*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
+        }
+        
+        if (app) {
+            return app->HandleNameDialogMessage(hwnd, uMsg, wParam, lParam);
+        }
+        
+        return DefWindowProc(hwnd, uMsg, wParam, lParam);
+    }
+    
     static LRESULT CALLBACK HistoryWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
         CalculatorApp* app = nullptr;
         
@@ -999,6 +1359,37 @@ public:
     
     LRESULT HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
         switch (uMsg) {
+            case WM_KEYDOWN:
+                // Verificar se Enter foi pressionado no campo de número de variáveis
+                if (wParam == VK_RETURN && GetFocus() == hwndMatrixSize) {
+                    // Forçar atualização do tamanho da matriz
+                    TCHAR buffer[10];
+                    GetWindowText(hwndMatrixSize, buffer, 10);
+                    int newSize = _ttoi(buffer);
+                    
+                    // Validação e atualização
+                    if (newSize >= 2 && newSize <= 10 && newSize != currentSize) {
+                        currentSize = newSize;
+                        PostMessage(hwndMain, WM_USER + 2, 0, 0);
+                    } else if (newSize > 10) {
+                        SetWindowText(hwndMatrixSize, TEXT("10"));
+                        currentSize = 10;
+                        PostMessage(hwndMain, WM_USER + 2, 0, 0);
+                    } else if (newSize < 2) {
+                        SetWindowText(hwndMatrixSize, TEXT("2"));
+                        currentSize = 2;
+                        PostMessage(hwndMain, WM_USER + 2, 0, 0);
+                    }
+                    
+                    // Mover foco para o primeiro campo da matriz
+                    if (!matrixInputs.empty() && !matrixInputs[0].empty() && IsWindow(matrixInputs[0][0])) {
+                        SetFocus(matrixInputs[0][0]);
+                    }
+                    
+                    return 0;
+                }
+                break;
+                
             case WM_COMMAND:
                 if (HIWORD(wParam) == BN_CLICKED) {
                     if (LOWORD(wParam) == ID_HISTORY_BUTTON) {
@@ -1114,6 +1505,34 @@ public:
                                 int selection = (int)SendMessage(hwndList, LB_GETCURSEL, 0, 0);
                                 if (selection != LB_ERR) {
                                     RestoreCalculationFromHistory(selection);
+                                }
+                            }
+                            break;
+                            
+                        case ID_DELETE_ITEM:
+                            {
+                                HWND hwndList = GetDlgItem(hwnd, ID_HISTORY_LIST);
+                                int selection = (int)SendMessage(hwndList, LB_GETCURSEL, 0, 0);
+                                if (selection != LB_ERR) {
+                                    DeleteHistoryItem(selection);
+                                    UpdateHistoryList(hwndList);
+                                } else {
+                                    MessageBox(hwnd, TEXT("Selecione um item para apagar."), 
+                                             TEXT("Nenhum Item Selecionado"), MB_OK | MB_ICONINFORMATION);
+                                }
+                            }
+                            break;
+                            
+                        case ID_RENAME_ITEM:
+                            {
+                                HWND hwndList = GetDlgItem(hwnd, ID_HISTORY_LIST);
+                                int selection = (int)SendMessage(hwndList, LB_GETCURSEL, 0, 0);
+                                if (selection != LB_ERR) {
+                                    RenameHistoryItem(selection);
+                                    UpdateHistoryList(hwndList);
+                                } else {
+                                    MessageBox(hwnd, TEXT("Selecione um item para renomear."), 
+                                             TEXT("Nenhum Item Selecionado"), MB_OK | MB_ICONINFORMATION);
                                 }
                             }
                             break;

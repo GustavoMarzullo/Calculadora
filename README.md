@@ -174,7 +174,6 @@ Contribuições são bem-vindas! Áreas de melhoria:
 
 - Suporte para números complexos
 - Exportação de resultados
-- Histórico de cálculos
 - Temas personalizáveis
 - Suporte para frações exatas
 
