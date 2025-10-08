@@ -71,9 +71,10 @@ struct CalculationHistory {
 #define ID_RESULT_TEXT 1003
 #define ID_HISTORY_BUTTON 1004
 #define ID_SAVE_BUTTON 1005
-#define ID_CLEAR_HISTORY 1006
-#define ID_HISTORY_LIST 1007
-#define ID_RESTORE_CALCULATION 1008
+#define ID_CLEAR_BUTTON 1006
+#define ID_CLEAR_HISTORY 1007
+#define ID_HISTORY_LIST 1008
+#define ID_RESTORE_CALCULATION 1009
 #define ID_MATRIX_START 2000
 
 // Cores da paleta elegante
@@ -93,6 +94,7 @@ private:
     HWND hwndSolutionLabel;
     HWND hwndHistoryButton;
     HWND hwndSaveButton;
+    HWND hwndClearButton;
     HWND hwndHistoryWindow;
     std::vector<std::vector<HWND>> matrixInputs;
     std::vector<HWND> constantInputs;
@@ -138,6 +140,7 @@ public:
         hwndSolutionLabel = nullptr;
         hwndHistoryButton = nullptr;
         hwndSaveButton = nullptr;
+        hwndClearButton = nullptr;
         hwndHistoryWindow = nullptr;
         
         // Criar brushes para cores
@@ -257,6 +260,12 @@ public:
             370, 68, 70, 25,
             hwndMain, (HMENU)(UINT_PTR)ID_SAVE_BUTTON, GetModuleHandle(nullptr), nullptr);
         
+        // Botão de limpar
+        hwndClearButton = CreateWindow(TEXT("BUTTON"), TEXT("Limpar"),
+            WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+            450, 68, 70, 25,
+            hwndMain, (HMENU)(UINT_PTR)ID_CLEAR_BUTTON, GetModuleHandle(nullptr), nullptr);
+        
         // Área de resultado (posicionada mais à direita para evitar sobreposição)
         hwndSolutionLabel = CreateWindow(TEXT("STATIC"), TEXT("Solução:"),
             WS_VISIBLE | WS_CHILD,
@@ -272,6 +281,7 @@ public:
         SendMessage(hwndMatrixSize, WM_SETFONT, (WPARAM)hFontMain, TRUE);
         SendMessage(hwndHistoryButton, WM_SETFONT, (WPARAM)hFontMain, TRUE);
         SendMessage(hwndSaveButton, WM_SETFONT, (WPARAM)hFontMain, TRUE);
+        SendMessage(hwndClearButton, WM_SETFONT, (WPARAM)hFontMain, TRUE);
         SendMessage(hwndResultText, WM_SETFONT, (WPARAM)hFontMain, TRUE);
     }
     
@@ -291,7 +301,7 @@ public:
         }
         
         // Limpeza AGRESSIVA: destruir TODOS os controles exceto os principais
-        std::vector<HWND> toKeep = {hwndMatrixSize, hwndResultText, hwndTitleLabel, hwndVariablesLabel, hwndSolutionLabel, hwndHistoryButton, hwndSaveButton};
+        std::vector<HWND> toKeep = {hwndMatrixSize, hwndResultText, hwndTitleLabel, hwndVariablesLabel, hwndSolutionLabel, hwndHistoryButton, hwndSaveButton, hwndClearButton};
         std::vector<HWND> toDestroy;
         
         HWND hChild = GetWindow(hwndMain, GW_CHILD);
@@ -341,10 +351,10 @@ public:
         // Calcular posição dos botões para determinar layout
         int buttonX = 280;
         if (totalWidth > 250) {
-            buttonX = std::max(280, totalWidth - 130);
+            buttonX = std::max(280, totalWidth - 200); // Mais espaço para 3 botões
         }
-        int buttonsEndX = buttonX + 90 + 70; // posição do último botão + largura
-        int resultX = std::max(500, buttonsEndX + 20); // pelo menos 20px de espaço
+        int buttonsEndX = buttonX + 90 + 70 + 70; // posição do último botão + largura (3 botões)
+        int resultX = std::max(550, buttonsEndX + 20); // pelo menos 20px de espaço
         int resultWidth = 280;
         
         // Ajustar tamanho da janela se necessário
@@ -407,9 +417,10 @@ public:
         SendMessage(hwndResultText, WM_SETFONT, (WPARAM)hFontMain, TRUE);
         
         // Reposicionar botões para evitar sobreposição
-        if (IsWindow(hwndHistoryButton) && IsWindow(hwndSaveButton)) {
+        if (IsWindow(hwndHistoryButton) && IsWindow(hwndSaveButton) && IsWindow(hwndClearButton)) {
             SetWindowPos(hwndHistoryButton, nullptr, buttonX, 68, 80, 25, SWP_NOZORDER);
             SetWindowPos(hwndSaveButton, nullptr, buttonX + 90, 68, 70, 25, SWP_NOZORDER);
+            SetWindowPos(hwndClearButton, nullptr, buttonX + 170, 68, 70, 25, SWP_NOZORDER);
         }
         
         // Reposicionar área de resultado dinamicamente
@@ -439,6 +450,42 @@ public:
     void TriggerCalculation() {
         std::lock_guard<std::mutex> lock(calculationMutex);
         shouldCalculate = true;
+    }
+    
+    void ClearAllVariables() {
+        // Limpar todos os campos da matriz
+        for (auto& row : matrixInputs) {
+            for (auto hwnd : row) {
+                if (IsWindow(hwnd)) {
+                    SetWindowText(hwnd, TEXT("0"));
+                }
+            }
+        }
+        
+        // Limpar todos os campos de constantes
+        for (auto hwnd : constantInputs) {
+            if (IsWindow(hwnd)) {
+                SetWindowText(hwnd, TEXT("0"));
+            }
+        }
+        
+        // Limpar área de resultado
+        if (IsWindow(hwndResultText)) {
+            SetWindowText(hwndResultText, TEXT("Digite os coeficientes da matriz e as constantes..."));
+        }
+        
+        // Resetar último cálculo
+        hasLastCalculation = false;
+        lastMatrix.clear();
+        lastConstants.clear();
+        
+        // Definir foco no primeiro campo
+        if (!matrixInputs.empty() && !matrixInputs[0].empty() && IsWindow(matrixInputs[0][0])) {
+            SetFocus(matrixInputs[0][0]);
+        }
+        
+        // Forçar recálculo
+        TriggerCalculation();
     }
     
     void SaveCurrentCalculation() {
@@ -958,6 +1005,8 @@ public:
                         ShowHistoryWindow();
                     } else if (LOWORD(wParam) == ID_SAVE_BUTTON) {
                         SaveCurrentCalculation();
+                    } else if (LOWORD(wParam) == ID_CLEAR_BUTTON) {
+                        ClearAllVariables();
                     }
                 } else if (HIWORD(wParam) == EN_CHANGE) {
                     if (LOWORD(wParam) == ID_MATRIX_SIZE) {
