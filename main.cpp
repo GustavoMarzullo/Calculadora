@@ -537,19 +537,57 @@ public:
                     file.write(reinterpret_cast<const char*>(&value), sizeof(value));
                 }
                 
-                // Nome personalizado (se houver último cálculo)
-                std::basic_string<TCHAR> customName;
-                if (hasLastCalculation && !lastSolution.values.empty()) {
-                    customName = TEXT("Cálculo Salvo");
-                }
-                
-                size_t nameLen = customName.length();
-                file.write(reinterpret_cast<const char*>(&nameLen), sizeof(nameLen));
-                if (nameLen > 0) {
-                    file.write(reinterpret_cast<const char*>(customName.c_str()), nameLen * sizeof(TCHAR));
-                }
-                
-                file.close();
+                    // Nome personalizado (se houver último cálculo)
+                    std::basic_string<TCHAR> customName;
+                    if (hasLastCalculation && !lastSolution.values.empty()) {
+                        customName = TEXT("Cálculo Salvo");
+                    }
+                    
+                    size_t nameLen = customName.length();
+                    file.write(reinterpret_cast<const char*>(&nameLen), sizeof(nameLen));
+                    if (nameLen > 0) {
+                        file.write(reinterpret_cast<const char*>(customName.c_str()), nameLen * sizeof(TCHAR));
+                    }
+                    
+                    // Salvar histórico completo no arquivo .calc
+                    size_t historyCount = calculationHistory.size();
+                    file.write(reinterpret_cast<const char*>(&historyCount), sizeof(historyCount));
+                    
+                    for (const auto& entry : calculationHistory) {
+                        // Salvar tamanho da matriz
+                        file.write(reinterpret_cast<const char*>(&entry.size), sizeof(entry.size));
+                        
+                        // Salvar matriz de coeficientes
+                        for (int i = 0; i < entry.size; i++) {
+                            for (int j = 0; j < entry.size; j++) {
+                                file.write(reinterpret_cast<const char*>(&entry.matrix[i][j]), sizeof(double));
+                            }
+                        }
+                        
+                        // Salvar constantes
+                        for (int i = 0; i < entry.size; i++) {
+                            file.write(reinterpret_cast<const char*>(&entry.constants[i]), sizeof(double));
+                        }
+                        
+                        // Salvar solução
+                        size_t solutionSize = entry.solution.values.size();
+                        file.write(reinterpret_cast<const char*>(&solutionSize), sizeof(solutionSize));
+                        for (const auto& value : entry.solution.values) {
+                            file.write(reinterpret_cast<const char*>(&value), sizeof(double));
+                        }
+                        
+                        int solutionStatus = static_cast<int>(entry.solution.status);
+                        file.write(reinterpret_cast<const char*>(&solutionStatus), sizeof(solutionStatus));
+                        
+                        // Salvar nome personalizado
+                        size_t customNameLen = entry.customName.length();
+                        file.write(reinterpret_cast<const char*>(&customNameLen), sizeof(customNameLen));
+                        if (customNameLen > 0) {
+                            file.write(reinterpret_cast<const char*>(entry.customName.c_str()), customNameLen * sizeof(TCHAR));
+                        }
+                    }
+                    
+                    file.close();
                 MessageBox(hwndMain, TEXT("Arquivo salvo com sucesso!"), TEXT("Sucesso"), MB_OK | MB_ICONINFORMATION);
                 
             } catch (...) {
@@ -635,18 +673,88 @@ public:
                     SetWindowText(constantInputs[i], valueStr);
                 }
                 
-                // Ler nome personalizado (opcional)
-                size_t nameLen;
-                if (file.read(reinterpret_cast<char*>(&nameLen), sizeof(nameLen))) {
-                    if (nameLen > 0 && nameLen < 1000) {
-                        std::vector<TCHAR> nameBuffer(nameLen + 1);
-                        file.read(reinterpret_cast<char*>(nameBuffer.data()), nameLen * sizeof(TCHAR));
-                        nameBuffer[nameLen] = 0;
-                        // Nome carregado (pode ser usado futuramente)
+                    // Ler nome personalizado (opcional)
+                    size_t nameLen;
+                    if (file.read(reinterpret_cast<char*>(&nameLen), sizeof(nameLen))) {
+                        if (nameLen > 0 && nameLen < 1000) {
+                            std::vector<TCHAR> nameBuffer(nameLen + 1);
+                            file.read(reinterpret_cast<char*>(nameBuffer.data()), nameLen * sizeof(TCHAR));
+                            nameBuffer[nameLen] = 0;
+                            // Nome carregado (pode ser usado futuramente)
+                        }
                     }
-                }
-                
-                file.close();
+                    
+                    // Carregar histórico do arquivo .calc
+                    size_t historyCount;
+                    if (file.read(reinterpret_cast<char*>(&historyCount), sizeof(historyCount))) {
+                        calculationHistory.clear(); // Limpar histórico atual
+                        
+                        for (size_t h = 0; h < historyCount && h < MAX_HISTORY_ITEMS; h++) {
+                            CalculationHistory entry;
+                            
+                            // Ler tamanho da matriz
+                            if (!file.read(reinterpret_cast<char*>(&entry.size), sizeof(entry.size))) break;
+                            
+                            if (entry.size < 2 || entry.size > 10) break; // Validação
+                            
+                            // Redimensionar vetores
+                            entry.matrix.resize(entry.size, std::vector<double>(entry.size));
+                            entry.constants.resize(entry.size);
+                            
+                            // Ler matriz de coeficientes
+                            bool readError = false;
+                            for (int i = 0; i < entry.size && !readError; i++) {
+                                for (int j = 0; j < entry.size && !readError; j++) {
+                                    if (!file.read(reinterpret_cast<char*>(&entry.matrix[i][j]), sizeof(double))) {
+                                        readError = true;
+                                    }
+                                }
+                            }
+                            if (readError) break;
+                            
+                            // Ler constantes
+                            for (int i = 0; i < entry.size; i++) {
+                                if (!file.read(reinterpret_cast<char*>(&entry.constants[i]), sizeof(double))) {
+                                    readError = true;
+                                    break;
+                                }
+                            }
+                            if (readError) break;
+                            
+                            // Ler solução
+                            size_t solutionSize;
+                            if (!file.read(reinterpret_cast<char*>(&solutionSize), sizeof(solutionSize))) break;
+                            
+                            entry.solution.values.resize(solutionSize);
+                            for (size_t i = 0; i < solutionSize; i++) {
+                                if (!file.read(reinterpret_cast<char*>(&entry.solution.values[i]), sizeof(double))) {
+                                    readError = true;
+                                    break;
+                                }
+                            }
+                            if (readError) break;
+                            
+                            int solutionStatus;
+                            if (!file.read(reinterpret_cast<char*>(&solutionStatus), sizeof(solutionStatus))) break;
+                            entry.solution.status = static_cast<LinearSolver::SolutionStatus>(solutionStatus);
+                            
+                            // Ler nome personalizado
+                            size_t customNameLen;
+                            if (file.read(reinterpret_cast<char*>(&customNameLen), sizeof(customNameLen))) {
+                                if (customNameLen > 0 && customNameLen < 1000) {
+                                    std::vector<TCHAR> nameBuffer(customNameLen + 1);
+                                    if (file.read(reinterpret_cast<char*>(nameBuffer.data()), customNameLen * sizeof(TCHAR))) {
+                                        nameBuffer[customNameLen] = 0;
+                                        entry.customName = nameBuffer.data();
+                                    }
+                                }
+                            }
+                            
+                            calculationHistory.push_back(entry);
+                        }
+                    }
+                    
+                    file.close();
                 
                 // Forçar recálculo
                 TriggerCalculation();
